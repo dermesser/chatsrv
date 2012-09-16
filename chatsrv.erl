@@ -70,7 +70,7 @@ send_message({Channel,Message}) ->
 	case mnesia:transaction(fun() -> 
 					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
 			end) of
-		{atomic,[Pid]} -> Pid ! {mesg,Message}, io:format("Sent Message to ~p~n",[Pid]);
+		{atomic,[Pid]} -> Pid ! {mesg,Message};
 		_ -> throw(dbError)
 	end.
 
@@ -149,16 +149,14 @@ remove_user(UserName) ->
 chanproc(Number) ->
 	receive
 		{mesg,Message} ->
-			io:format("Received Mesg: ~p~n",[Message]),
 			{atomic,[Members]} = mnesia:transaction(fun() ->
 						qlc:e(qlc:q([C#channels.members || C <- mnesia:table(channels), C#channels.cnumber =:= Number]))
 				end),
-			io:format("Sending to ~p~n",[Members]),
 			lists:foreach(fun(U) ->
 						{atomic,[Pid]} = mnesia:transaction(fun() ->
 									qlc:e(qlc:q([V#users.pid || V <- mnesia:table(users), V#users.uid =:= U]))
 							end),
-						Pid ! {mesg,Message}, io:format("Sending Message to ~p~n",[Pid]) end,Members), chanproc(Number)
+						Pid ! {mesg,Message} end,Members), chanproc(Number)
 	end.
 
 parse_message(Message) ->
