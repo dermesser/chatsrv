@@ -19,15 +19,12 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
-
-	// Log in
 	char action1[32];
 	memset(action1,0,32);
 
 	action1[0] = 3;
-	strcpy(action1+1,"lbo_fbsduser");
+	strcpy(action1+1,"lbo_unixuser");
 
-	// Join Channel 45
 	char action2[9];
 	memset(action2,0,9);
 	
@@ -40,20 +37,14 @@ int main(int argc, char** argv)
 	write(fd,&action1,13);
 	sleep(1);
 	write(fd,&action2,9);
-	
-
 
 	int bytes = 0;
-	char message_action = 2;
+	char buf[32];
+	buf[31] = 0;
 
-	char whole_mesg[73];
-	memset(whole_mesg,0,73);
-	memcpy(whole_mesg,&message_action,1);
-	memcpy(whole_mesg+1,&channum,8);
-
-	while ( bytes = read(0,whole_mesg+9,63) )
+	while ( bytes = read(fd,buf,31) )
 	{
-		write(fd,whole_mesg,bytes+9);
+		write(1,buf,bytes);
 	}
 
 	close(fd);

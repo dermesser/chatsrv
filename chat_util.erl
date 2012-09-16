@@ -7,7 +7,7 @@ find_mesg_limit(Message) -> find_mesg_limit(Message,1).
 find_mesg_limit(<<>>,N) -> N;
 find_mesg_limit(Message,N) ->
 	case split_binary(Message,1) of
-		{<<0>>,Rest} -> N;
+		{<<0>>,_Rest} -> N;
 		{_OtherChar,Rest} -> find_mesg_limit(Rest,N+1)
 	end.
 
