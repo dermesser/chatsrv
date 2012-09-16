@@ -42,10 +42,12 @@ int main(int argc, char** argv)
 	char buf[32];
 	buf[31] = 0;
 
-	while ( bytes = read(fd,buf,31) )
-	{
-		write(1,buf,bytes);
-	}
+	bytes = read(fd,buf,31);
+	write(1,buf,bytes);
+
+	char action3 = 4;
+
+	write(fd,&action3,1);
 
 	close(fd);
 

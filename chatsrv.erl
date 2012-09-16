@@ -40,10 +40,11 @@ handle_client(Socket,UserName) ->
 	receive
 		%% A new TCP message
 		{tcp,Socket,Data} ->
-			%% Handle the message with handle_data() - providing join, log in, etc
+			%% Handle the message with handle_data() - providing join, log in, sending messages etc
 			try handle_data(Data,UserName) of
-				%% Should return a user name (in case of change)
-				String when is_list(String) -> handle_client(Socket,String)
+				%% Should always return a user name (in case of change)
+				String when is_list(String) -> handle_client(Socket,String);
+				deleted -> gen_tcp:close(Socket)
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
 				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"), handle_client(Socket,UserName) %% Thrown by join_channel()
@@ -52,8 +53,10 @@ handle_client(Socket,UserName) ->
 		{mesg,Message} -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
 	end.
 
-%% Handle received Data -- basically a dispatcher. Called for every received message
+%% Handle received Data -- basically a dispatcher. Called on every received message
 handle_data(Data,UserName) ->
+	%% Separate the first byte, it's the type of message byte
+	io:format("~p~n",[Data]),
 	case split_binary(Data,1) of
 		{<<1>>,ChanName} ->
 			<<ChanNumber:64/native>> = ChanName,
@@ -62,8 +65,11 @@ handle_data(Data,UserName) ->
 		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg), send_message({DstChannel,[UserName|[": "|OrigMessage]]}), UserName;
 		{<<3>>,NewUserName} -> {atomic,ok} = 
 			add_user(binary_to_list(NewUserName)), 
-			binary_to_list(NewUserName)
+			binary_to_list(NewUserName);
+		{<<4>>,<<>>} -> remove_user(UserName), deleted
 	end.
+
+%%%%%%%%%%%%%%%%%%%%% Functions called by the handle_data() dispatcher %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Send a message to a channel
 send_message({Channel,Message}) ->
@@ -144,6 +150,8 @@ remove_user(UserName) ->
 					end, Channels),
 				lists:foreach(fun(X) -> mnesia:write(X) end,NewChannels)
 		end).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Channel server: This channel sends the messages appearing in a channel to all users in this channel.
 chanproc(Number) ->
