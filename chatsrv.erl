@@ -59,7 +59,7 @@ handle_data(Data,UserName) ->
 			<<ChanNumber:64/native>> = ChanName,
 			join_channel(ChanNumber,UserName),
 			UserName;
-		{<<2>>,ChanAndMesg} -> send_message(parse_message(ChanAndMesg)), UserName;
+		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg), send_message({DstChannel,[UserName|[": "|OrigMessage]]}), UserName;
 		{<<3>>,NewUserName} -> {atomic,ok} = 
 			add_user(binary_to_list(NewUserName)), 
 			binary_to_list(NewUserName)
