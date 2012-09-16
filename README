@@ -1,0 +1,24 @@
+README for chatsrv
+
+chatsrv is a concurrent chat server with a cross-platform protocol.
+
+It is written in Erlang with an extensive usage of Mnesia and concurrency.
+
+The concurrency model looks like this:
+
+Way of a message
+****************
+
+[Client (e.g. written in C)]
+	--Network-->
+		[EProcess associated with the client]
+			---EMessage--->
+				[Channel Eprocess]
+			---EMessage--->
+		[EProcess associated with other client]
+	--Network-->
+[Client]
+
+
+Mnesia is used to store the channels (channels are a number from 0 - 2^64) and which users are in them,
+and the users itselves.

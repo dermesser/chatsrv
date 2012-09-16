@@ -1,7 +1,0 @@
-
-<<Action,Message>>
-
--> Action = 1 | 2
-	-> 1 = Join a channel
-	-> 2 = Send a message
--> Message = <<"some_channel",0,"some_message">>

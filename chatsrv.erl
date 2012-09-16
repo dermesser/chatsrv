@@ -47,7 +47,8 @@ handle_client(Socket,UserName) ->
 				deleted -> gen_tcp:close(Socket)
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
-				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"), handle_client(Socket,UserName) %% Thrown by join_channel()
+				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
+					handle_client(Socket,UserName) %% Thrown by join_channel()
 			end;
 		{tcp,closed} -> remove_user(UserName);
 		{mesg,Message} -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
@@ -63,8 +64,8 @@ handle_data(Data,UserName) ->
 			join_channel(ChanNumber,UserName),
 			UserName;
 		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg), send_message({DstChannel,[UserName|[": "|OrigMessage]]}), UserName;
-		{<<3>>,NewUserName} -> {atomic,ok} = 
-			add_user(binary_to_list(NewUserName)), 
+		{<<3>>,NewUserName} -> {atomic,ok} =
+			add_user(binary_to_list(NewUserName)),
 			binary_to_list(NewUserName);
 		{<<4>>,<<>>} -> remove_user(UserName), deleted
 	end.
@@ -73,7 +74,7 @@ handle_data(Data,UserName) ->
 
 %% Send a message to a channel
 send_message({Channel,Message}) ->
-	case mnesia:transaction(fun() -> 
+	case mnesia:transaction(fun() ->
 					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
 			end) of
 		{atomic,[Pid]} -> Pid ! {mesg,Message};
@@ -145,7 +146,7 @@ remove_user(UserName) ->
 				end),
 	{atomic,ok} = mnesia:transaction(fun() ->
 				Channels = qlc:e(qlc:q([C || C <- mnesia:table(channels)])),
-				NewChannels = lists:map(fun(Channel) -> 
+				NewChannels = lists:map(fun(Channel) ->
 							#channels{cnumber=Channel#channels.cnumber,pid=Channel#channels.pid,topic=Channel#channels.topic,members=lists:subtract(Channel#channels.members,[UID])}
 					end, Channels),
 				lists:foreach(fun(X) -> mnesia:write(X) end,NewChannels)

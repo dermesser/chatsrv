@@ -1,0 +1,9 @@
+Binary packet form:
+
+<<Action,Message>>
+
+-> Action = 1 | 2 | 3 | 4
+	-> 1 = Join a channel (Message = <<Channel:64/little-unsigned>>)
+	-> 2 = Send a message (Message = <<Channel:64/little-unsigned,0,"foobar">>)
+	-> 3 = Register a user name for the current connection (Message = <<"foo_user">>)
+	-> 4 = Delete (disassociate) the current user name. (Message = <<>>)
