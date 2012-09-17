@@ -63,7 +63,9 @@ handle_data(Data,UserName) ->
 			<<ChanNumber:64/native>> = ChanName,
 			join_channel(ChanNumber,UserName),
 			UserName;
-		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg), send_message({DstChannel,[UserName|[": "|OrigMessage]]}), UserName;
+		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg),
+			send_message({DstChannel,[UserName|[": "|OrigMessage]]}),
+			UserName;
 		{<<3>>,NewUserName} -> {atomic,ok} =
 			add_user(binary_to_list(NewUserName)),
 			binary_to_list(NewUserName);
@@ -147,7 +149,10 @@ remove_user(UserName) ->
 	{atomic,ok} = mnesia:transaction(fun() ->
 				Channels = qlc:e(qlc:q([C || C <- mnesia:table(channels)])),
 				NewChannels = lists:map(fun(Channel) ->
-							#channels{cnumber=Channel#channels.cnumber,pid=Channel#channels.pid,topic=Channel#channels.topic,members=lists:subtract(Channel#channels.members,[UID])}
+							#channels{cnumber=Channel#channels.cnumber,
+								pid=Channel#channels.pid,
+								topic=Channel#channels.topic,
+								members=lists:subtract(Channel#channels.members,[UID])}
 					end, Channels),
 				lists:foreach(fun(X) -> mnesia:write(X) end,NewChannels)
 		end).
