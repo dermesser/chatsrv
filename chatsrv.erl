@@ -6,6 +6,9 @@
 -record(channels,{cnumber,pid,topic,members}).
 -record(users,{uid,uname,pid}).
 
+%% CLI entry point
+main([TrueOrFalse]) -> start_server(TrueOrFalse).
+
 %% Start server process and DB
 start_server(New) ->
 	start_mnesia(New),
@@ -57,7 +60,7 @@ handle_client(Socket,UserName) ->
 %% Handle received Data -- basically a dispatcher. Called on every received message
 handle_data(Data,UserName) ->
 	%% Separate the first byte, it's the type of message byte
-	io:format("~p~n",[Data]),
+	%io:format("~p~n",[Data]),
 	case split_binary(Data,1) of
 		{<<1>>,ChanName} ->
 			<<ChanNumber:64/native>> = ChanName,
@@ -69,7 +72,8 @@ handle_data(Data,UserName) ->
 		{<<3>>,NewUserName} -> {atomic,ok} =
 			add_user(binary_to_list(NewUserName)),
 			binary_to_list(NewUserName);
-		{<<4>>,<<>>} -> remove_user(UserName), deleted
+		{<<4>>,<<>>} -> remove_user(UserName), deleted;
+		{<<5>>,<<ChanNum:64/native-unsigned>>} -> remove_user_from(UserName,ChanNum), parted
 	end.
 
 %%%%%%%%%%%%%%%%%%%%% Functions called by the handle_data() dispatcher %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -155,6 +159,17 @@ remove_user(UserName) ->
 								members=lists:subtract(Channel#channels.members,[UID])}
 					end, Channels),
 				lists:foreach(fun(X) -> mnesia:write(X) end,NewChannels)
+		end).
+
+remove_user_from(UserName,Channel) ->
+	%% Obtain UID
+	{atomic,[UID]} = mnesia:transaction(fun() ->
+				qlc:e(qlc:q([U#users.uid || U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
+			end),
+	{atomic,ok} = mnesia:transaction(fun() ->
+				[OldChannelRecord] = mnesia:read({channels,Channel}),
+				UpdatedChannelRecord = OldChannelRecord#channels{members=lists:subtract(OldChannelRecord#channels.members,[UID])},
+				mnesia:write(UpdatedChannelRecord)
 		end).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
