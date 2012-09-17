@@ -10,9 +10,9 @@ int main(int argc, char** argv)
 {
 	int fd = -1;
 	const char* host = "192.168.1.8";
-	
+
 	fd = create_inet_stream_socket(host,"32768",IPv4,0);
-	
+
 	if ( fd < 0 )
 	{
 		perror("Couldn't create socket\n");
@@ -27,7 +27,7 @@ int main(int argc, char** argv)
 
 	char action2[9];
 	memset(action2,0,9);
-	
+
 	action2[0] = 1;
 
 	uint64_t channum = 45;
@@ -42,9 +42,14 @@ int main(int argc, char** argv)
 	char buf[32];
 	buf[31] = 0;
 
+	unsigned long long cur_chan = 0;
+
 	while ( bytes = read(fd,buf,31) )
 	{
-		write(1,buf,bytes);
+		printf("New message: ");
+		cur_chan = *((uint64_t*)buf);
+		printf("%llu: ",cur_chan);
+		write(1,buf+8,bytes-8);
 	}
 
 	close(fd);

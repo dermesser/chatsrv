@@ -10,9 +10,9 @@ int main(int argc, char** argv)
 {
 	int fd = -1;
 	const char* host = "192.168.1.8";
-	
+
 	fd = create_inet_stream_socket(host,"32768",IPv4,0);
-	
+
 	if ( fd < 0 )
 	{
 		perror("Couldn't create socket\n");
@@ -30,7 +30,7 @@ int main(int argc, char** argv)
 	// Join Channel 45
 	char action2[9];
 	memset(action2,0,9);
-	
+
 	action2[0] = 1;
 
 	uint64_t channum = 45;
@@ -40,7 +40,7 @@ int main(int argc, char** argv)
 	write(fd,&action1,13);
 	sleep(1);
 	write(fd,&action2,9);
-	
+
 
 
 	int bytes = 0;
@@ -51,12 +51,14 @@ int main(int argc, char** argv)
 	memcpy(whole_mesg,&message_action,1);
 	memcpy(whole_mesg+1,&channum,8);
 
-	while ( bytes = read(0,whole_mesg+9,63) )
+	while ( 0 < (bytes = read(0,whole_mesg+9,63)) )
 	{
 		write(fd,whole_mesg,bytes+9);
 	}
 
-	close(fd);
+	char action3 = 4;
+
+	write(fd,&action3,1);
 
 	return 0;
 }

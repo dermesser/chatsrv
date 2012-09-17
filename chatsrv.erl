@@ -33,9 +33,9 @@ start_client_listen() ->
 %% Accept connections
 accept_loop(Socket) ->
 	{ok,ClSock} = gen_tcp:accept(Socket),
-	spawn(?MODULE,accept_loop,[Socket]),
-	handle_client(ClSock,""),
-	gen_tcp:close(ClSock).
+	%% Our client handler expects tcp data as messages
+	gen_tcp:controlling_process(ClSock,spawn(?MODULE,handle_client,[ClSock,""])),
+	accept_loop(Socket).
 
 %% Handle clients in a loop
 %% UserName is the state. It's the associated user.
@@ -47,13 +47,13 @@ handle_client(Socket,UserName) ->
 			try handle_data(Data,UserName) of
 				%% Should always return a user name (in case of change)
 				String when is_list(String) -> handle_client(Socket,String);
-				deleted -> gen_tcp:close(Socket)
+				deleted -> void
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
 				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
 					handle_client(Socket,UserName) %% Thrown by join_channel()
 			end;
-		{tcp,closed} -> remove_user(UserName);
+		{tcp_closed,Socket} -> remove_user(UserName);
 		{mesg,Message} -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
 	end.
 
@@ -185,7 +185,9 @@ chanproc(Number) ->
 						{atomic,[Pid]} = mnesia:transaction(fun() ->
 									qlc:e(qlc:q([V#users.pid || V <- mnesia:table(users), V#users.uid =:= U]))
 							end),
-						Pid ! {mesg,Message} end,Members), chanproc(Number)
+						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
+						Pid ! {mesg,[<<Number:64/unsigned-native>>,Message]}
+				end,Members), chanproc(Number)
 	end.
 
 parse_message(Message) ->
