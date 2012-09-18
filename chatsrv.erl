@@ -3,8 +3,8 @@
 
 -include("/usr/lib/erlang/lib/stdlib-1.18.1/include/qlc.hrl").
 
--record(channels,{cnumber,pid,topic,members}).
--record(users,{uid,uname,pid}).
+-record(channels,{cnumber,pid,topic}).
+-record(users,{uid,uname,pid,channels}).
 
 %% CLI entry point
 main([TrueOrFalse]) -> start_server(TrueOrFalse).
@@ -47,14 +47,16 @@ handle_client(Socket,UserName) ->
 			try handle_data(Data,UserName) of
 				%% Should always return a user name (in case of change)
 				String when is_list(String) -> handle_client(Socket,String);
-				deleted -> void
+				deleted -> gen_tcp:close(Socket);
+				parted -> handle_client(Socket,UserName);
+				dbError -> gen_tcp:close(Socket)
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
 				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
 					handle_client(Socket,UserName) %% Thrown by join_channel()
 			end;
 		{tcp_closed,Socket} -> remove_user(UserName);
-		{mesg,Message} -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
+		{mesg,Message}      -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
 	end.
 
 %% Handle received Data -- basically a dispatcher. Called on every received message
@@ -63,131 +65,142 @@ handle_data(Data,UserName) ->
 	%io:format("~p~n",[Data]),
 	case split_binary(Data,1) of
 		{<<1>>,ChanName} ->
-			<<ChanNumber:64/native>> = ChanName,
+			<<ChanNumber:64/native-unsigned>> = ChanName,
 			join_channel(ChanNumber,UserName),
 			UserName;
 		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg),
 			send_message({DstChannel,[UserName|[": "|OrigMessage]]}),
 			UserName;
-		{<<3>>,NewUserName} -> {atomic,ok} =
-			add_user(binary_to_list(NewUserName)),
-			binary_to_list(NewUserName);
-		{<<4>>,<<>>} -> remove_user(UserName), deleted;
-		{<<5>>,<<ChanNum:64/native-unsigned>>} -> remove_user_from(UserName,ChanNum), parted
+		{<<3>>,NewUserName} ->
+			UserAsString = binary_to_list(NewUserName),
+			ok = add_user(UserAsString),
+			case string:equal(UserName,"") of
+				false -> remove_user(UserName);
+				true -> ok
+			end,
+			UserAsString;
+		{<<4>>,<<>>} ->
+			case string:equal(UserName,"") of
+				false -> remove_user(UserName), deleted;
+				true -> deleted
+			end;
+		{<<5>>,<<ChanNum:64/native-unsigned>>} -> 
+			remove_user_from(UserName,ChanNum), 
+			parted
 	end.
 
 %%%%%%%%%%%%%%%%%%%%% Functions called by the handle_data() dispatcher %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Send a message to a channel
 send_message({Channel,Message}) ->
+	%% Obtain Channel PID
 	case mnesia:transaction(fun() ->
 					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
 			end) of
 		{atomic,[Pid]} -> Pid ! {mesg,Message};
-		_ -> throw(dbError)
+		_              -> throw(dbError)
 	end.
 
 %% Associate a user with a channel
 join_channel(Channel,User) ->
 	%% Get UID of user
 	case mnesia:transaction(fun() ->
-				qlc:e(qlc:q([U#users.uid || U <- mnesia:table(users), string:equal(U#users.uname,User)]))
+				qlc:e(qlc:q([U || U <- mnesia:table(users), string:equal(U#users.uname,User)]))
 		end) of
 
-		{atomic,[UID]} -> UID;
-		{atomic,[]}    -> UID = 42, throw(noSuchUser) %% Abort - no such user. Should break the connection
+		{atomic,[UserRecord]} -> UserRecord;
+		{atomic,[]}           -> UserRecord = {}, throw(noSuchUser) %% Abort - no such user
 	end,
 
-	%% Get list which users are already in this channel
+	%% Get Channel PID, send add command or create channel.
 	case mnesia:transaction(fun() ->
-				qlc:e(qlc:q([C#channels.members || C <- mnesia:table(channels), string:equal(C#channels.cnumber,Channel)]))
-		end) of
-
-		{atomic,[ListOfJoinedUsersInThisChannel]} -> fine;
-		{atomic,[]} -> ListOfJoinedUsersInThisChannel = []
+					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
+			end) of
+		%% Channel exists
+		{atomic,[Pid]} -> Pid ! {add_member,UserRecord#users.uid};
+		%% Create new channel
+		{atomic,[]} ->
+			NewCPid = spawn(?MODULE,chanproc,[Channel,[UserRecord#users.uid]]),
+			Record = #channels{cnumber=Channel, pid=NewCPid, topic=""},
+			mnesia:transaction(fun() -> mnesia:write(Record) end);
+		_ -> throw(dbError)
 	end,
 
-	case lists:member(UID,ListOfJoinedUsersInThisChannel) of
-		%% User is not yet in this channel
-		false -> {atomic,ok} = mnesia:transaction(fun() ->
-					case mnesia:read(channels,Channel) of
-						%% Channel already exists
-						[{channels,Number,Pid,Topic,Members}] -> Record = #channels{cnumber=Number,pid=Pid,topic=Topic,members=[UID|Members]};
-						%% Channel gets created
-						[] -> Record = #channels{cnumber=Channel, pid=spawn(?MODULE,chanproc,[Channel]), topic="",members=[UID]}
-					end,
-					mnesia:write(Record)
-			end);
-		%% User is already in this channel
-		true -> goodAsWell
-	end.
+	%% Write back the new User Record with the new channel appended
+	{atomic,ok} = mnesia:transaction(fun() ->
+				OldChannels = UserRecord#users.channels,
+				JoinedUser = UserRecord#users{channels=[Channel|OldChannels]},
+				mnesia:write(JoinedUser)
+		end).
 
 %% Add a user to the db
 add_user(UserName) ->
+	io:format("Adding User ~p~n",[UserName]),
 	Pid = self(),
 
-	{atomic,PreviousUser} = mnesia:transaction(fun() ->
-				qlc:e(qlc:q([U#users.uname || U <- mnesia:table(users), string:equal(UserName,U#users.uname)]))
-		end),
-
-	case PreviousUser of
-		[] -> fine;
-		_Other -> throw(userExistsAlready)
-	end,
-
-	{atomic,ok} = mnesia:transaction(fun() ->
-				Record = #users{uid=make_ref(),uname=UserName, pid=Pid},
+	case mnesia:transaction(fun() ->
+				%% ensure that no other user of this name is registered
+				case qlc:e(qlc:q([U#users.uname || U <- mnesia:table(users), string:equal(UserName,U#users.uname)])) of
+					[] -> ok;
+					_ -> throw(userExistsAlready)
+				end,
+				Record = #users{uid=make_ref(),uname=UserName, pid=Pid,channels=[]},
 				mnesia:write(Record)
-		end).
+		end) of
+
+		{atomic,ok}              -> ok;
+		{aborted,{throw,Reason}} -> throw(Reason)
+	end.
 
 %% Remove a user from everywhere
 remove_user(UserName) ->
+	io:format("Removing ~p~n",[UserName]),
 	%% Obtain UID
-	{atomic,[UID]} = mnesia:transaction(fun() ->
-				qlc:e(qlc:q([U#users.uid || U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
+	{atomic,[{UID,Channels}]} = mnesia:transaction(fun() ->
+				qlc:e(qlc:q([{U#users.uid,U#users.channels} || U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
 			end),
 	%% Delete user name from table
 	{atomic,ok} = mnesia:transaction(fun() ->
 					mnesia:delete({users,UID})
 				end),
-	{atomic,ok} = mnesia:transaction(fun() ->
-				Channels = qlc:e(qlc:q([C || C <- mnesia:table(channels)])),
-				NewChannels = lists:map(fun(Channel) ->
-							#channels{cnumber=Channel#channels.cnumber,
-								pid=Channel#channels.pid,
-								topic=Channel#channels.topic,
-								members=lists:subtract(Channel#channels.members,[UID])}
-					end, Channels),
-				lists:foreach(fun(X) -> mnesia:write(X) end,NewChannels)
-		end).
+	%% Go through all channels where the user is registered and remove him
+	lists:foreach(fun(E) ->
+				{atomic,[CPid]} = mnesia:transaction(fun() ->
+							qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= E]))
+					end),
+				CPid ! {remove_member,UID}
+		end,Channels).
 
 remove_user_from(UserName,Channel) ->
 	%% Obtain UID
 	{atomic,[UID]} = mnesia:transaction(fun() ->
-				qlc:e(qlc:q([U#users.uid || U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
-			end),
-	{atomic,ok} = mnesia:transaction(fun() ->
-				[OldChannelRecord] = mnesia:read({channels,Channel}),
-				UpdatedChannelRecord = OldChannelRecord#channels{members=lists:subtract(OldChannelRecord#channels.members,[UID])},
-				mnesia:write(UpdatedChannelRecord)
-		end).
+				qlc:e(qlc:q([U#users.uid|| U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
+		end),
+	%% Obtain Channel PID
+	{atomic,[CPid]} = mnesia:transaction(fun() ->
+				qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
+		end),
+
+	CPid ! {remove_member,UID}.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Channel server: This channel sends the messages appearing in a channel to all users in this channel.
-chanproc(Number) ->
+chanproc(Number,Members) ->
+	io:format("~p~n",[Members]),
+
 	receive
-		{mesg,Message} ->
-			{atomic,[Members]} = mnesia:transaction(fun() ->
-						qlc:e(qlc:q([C#channels.members || C <- mnesia:table(channels), C#channels.cnumber =:= Number]))
-				end),
+		{mesg,Message}      ->
 			lists:foreach(fun(U) ->
 						{atomic,[Pid]} = mnesia:transaction(fun() ->
 									qlc:e(qlc:q([V#users.pid || V <- mnesia:table(users), V#users.uid =:= U]))
 							end),
 						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
 						Pid ! {mesg,[<<Number:64/unsigned-native>>,Message]}
-				end,Members), chanproc(Number)
+				end,Members), chanproc(Number,Members);
+		{add_member,UID}    -> chanproc(Number,[UID|Members]);
+		{remove_member,UID} -> chanproc(Number,lists:subtract(Members,[UID]))
 	end.
 
 parse_message(Message) ->
