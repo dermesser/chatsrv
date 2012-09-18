@@ -49,11 +49,12 @@ handle_client(Socket,UserName) ->
 				String when is_list(String) -> handle_client(Socket,String);
 				deleted -> gen_tcp:close(Socket);
 				parted -> handle_client(Socket,UserName);
-				dbError -> gen_tcp:close(Socket)
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
 				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
-					handle_client(Socket,UserName) %% Thrown by join_channel()
+					handle_client(Socket,UserName); %% Thrown by join_channel()
+				throw: dbError -> gen_tcp:send(Socket,"EXCEPTION: dbError exception. Continue...\n"),
+					handle_client(Socket,UserName)
 			end;
 		{tcp_closed,Socket} -> remove_user(UserName);
 		{mesg,Message}      -> gen_tcp:send(Socket,Message), handle_client(Socket,UserName)
@@ -84,8 +85,8 @@ handle_data(Data,UserName) ->
 				false -> remove_user(UserName), deleted;
 				true -> deleted
 			end;
-		{<<5>>,<<ChanNum:64/native-unsigned>>} -> 
-			remove_user_from(UserName,ChanNum), 
+		{<<5>>,<<ChanNum:64/native-unsigned>>} ->
+			remove_user_from(UserName,ChanNum),
 			parted
 	end.
 
