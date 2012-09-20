@@ -197,13 +197,14 @@ chanproc(Number,Members) ->
 
 	receive
 		{mesg,Message}      ->
-			lists:foreach(fun(U) ->
-						{atomic,[Pid]} = mnesia:transaction(fun() ->
-									qlc:e(qlc:q([V#users.pid || V <- mnesia:table(users), V#users.uid =:= U]))
-							end),
+			{atomic,MemberPIDs} = mnesia:transaction(fun() ->
+						qlc:e(qlc:q([U#users.pid || U <- mnesia:table(users), lists:member(U#users.uid,Members)]))
+				end),
+			lists:foreach(fun(Pid) ->
 						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
 						Pid ! {mesg,[<<Number:64/unsigned-native>>,Message]}
-				end,Members), chanproc(Number,Members);
+				end,MemberPIDs),
+			chanproc(Number,Members);
 		{add_member,UID}    -> chanproc(Number,[UID|Members]);
 		{remove_member,UID} -> chanproc(Number,lists:subtract(Members,[UID]))
 	end.
