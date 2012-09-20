@@ -48,7 +48,7 @@ handle_client(Socket,UserName) ->
 				%% Should always return a user name (in case of change)
 				String when is_list(String) -> handle_client(Socket,String);
 				deleted -> gen_tcp:close(Socket);
-				parted -> handle_client(Socket,UserName);
+				parted -> handle_client(Socket,UserName)
 			catch
 				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
 				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
@@ -65,12 +65,11 @@ handle_data(Data,UserName) ->
 	%% Separate the first byte, it's the type of message byte
 	%io:format("~p~n",[Data]),
 	case split_binary(Data,1) of
-		{<<1>>,ChanName} ->
-			<<ChanNumber:64/native-unsigned>> = ChanName,
+		{<<1>>,<<ChanNumber:64/native-unsigned>>} ->
 			join_channel(ChanNumber,UserName),
 			UserName;
 		{<<2>>,ChanAndMesg} -> {DstChannel, OrigMessage} = parse_message(ChanAndMesg),
-			send_message({DstChannel,[UserName|[": "|OrigMessage]]}),
+			send_message(DstChannel,[UserName|[": "|OrigMessage]]),
 			UserName;
 		{<<3>>,NewUserName} ->
 			UserAsString = binary_to_list(NewUserName),
@@ -93,12 +92,12 @@ handle_data(Data,UserName) ->
 %%%%%%%%%%%%%%%%%%%%% Functions called by the handle_data() dispatcher %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Send a message to a channel
-send_message({Channel,Message}) ->
+send_message(Channel,Message) ->
 	%% Obtain Channel PID
 	case mnesia:transaction(fun() ->
-					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
+					mnesia:read({channels,Channel})
 			end) of
-		{atomic,[Pid]} -> Pid ! {mesg,Message};
+		{atomic,[#channels{pid=Pid}]} -> Pid ! {mesg,Message};
 		_              -> throw(dbError)
 	end.
 
@@ -115,16 +114,20 @@ join_channel(Channel,User) ->
 
 	%% Get Channel PID, send add command or create channel.
 	case mnesia:transaction(fun() ->
-					qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
+				case qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel])) of
+					%% Channel exists
+					[Pid] -> Pid ! {add_member,UserRecord#users.uid}, ok;
+					%% Create new channel
+					[] ->
+						NewCPid = spawn(?MODULE,chanproc,[Channel,[UserRecord#users.uid]]),
+						Record = #channels{cnumber=Channel, pid=NewCPid, topic=""},
+						mnesia:write(Record),
+						ok;
+					_ -> throw(dbError)
+				end
 			end) of
-		%% Channel exists
-		{atomic,[Pid]} -> Pid ! {add_member,UserRecord#users.uid};
-		%% Create new channel
-		{atomic,[]} ->
-			NewCPid = spawn(?MODULE,chanproc,[Channel,[UserRecord#users.uid]]),
-			Record = #channels{cnumber=Channel, pid=NewCPid, topic=""},
-			mnesia:transaction(fun() -> mnesia:write(Record) end);
-		_ -> throw(dbError)
+		{atomic,ok} -> ok;
+		{aborted,{throw,Exception}} -> throw(Exception)
 	end,
 
 	%% Write back the new User Record with the new channel appended
