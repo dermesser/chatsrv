@@ -1,7 +1,7 @@
 -module(chatsrv).
 -compile(export_all).
 
--include("/usr/lib/erlang/lib/stdlib-1.18.1/include/qlc.hrl").
+-include_lib("stdlib/include/qlc.hrl").
 
 -record(channels,{cnumber,pid,topic}).
 -record(users,{uid,uname,pid,channels}).
