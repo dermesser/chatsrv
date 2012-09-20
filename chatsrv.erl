@@ -114,9 +114,9 @@ join_channel(Channel,User) ->
 
 	%% Get Channel PID, send add command or create channel.
 	case mnesia:transaction(fun() ->
-				case qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel])) of
+				case mnesia:read({channels,Channel}) of
 					%% Channel exists
-					[Pid] -> Pid ! {add_member,UserRecord#users.uid}, ok;
+					[#channels{pid=Pid}] -> Pid ! {add_member,UserRecord#users.uid}, ok;
 					%% Create new channel
 					[] ->
 						NewCPid = spawn(?MODULE,chanproc,[Channel,[UserRecord#users.uid]]),
@@ -160,20 +160,21 @@ add_user(UserName) ->
 remove_user(UserName) ->
 	io:format("Removing ~p~n",[UserName]),
 	%% Obtain UID
-	{atomic,[{UID,Channels}]} = mnesia:transaction(fun() ->
-				qlc:e(qlc:q([{U#users.uid,U#users.channels} || U <- mnesia:table(users), string:equal(U#users.uname,UserName)]))
+	{atomic,{UID,Channels}} = mnesia:transaction(fun() ->
+				[{UID,Channels}] = qlc:e(qlc:q([{U#users.uid,U#users.channels} || U <- mnesia:table(users), string:equal(U#users.uname,UserName)])),
+				%% Delete him
+				mnesia:delete({users,UID}),
+				{UID,Channels}
 			end),
-	%% Delete user name from table
-	{atomic,ok} = mnesia:transaction(fun() ->
-					mnesia:delete({users,UID})
-				end),
-	%% Go through all channels where the user is registered and remove him
-	lists:foreach(fun(E) ->
-				{atomic,[CPid]} = mnesia:transaction(fun() ->
-							qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= E]))
-					end),
+
+	%% Get the list of corresponding Channel PIDs
+	{atomic,CPids} = mnesia:transaction(fun() ->
+				qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), lists:member(C#channels.cnumber,Channels)]))
+		end),
+
+	lists:foreach(fun(CPid) ->
 				CPid ! {remove_member,UID}
-		end,Channels).
+		end,CPids).
 
 remove_user_from(UserName,Channel) ->
 	%% Obtain UID
