@@ -1,9 +1,37 @@
-Binary packet form:
+This file documents the protocol used by chatsrv and should
+be read by developers writing clients for chatsrv.
 
-<<Action,Message>>
 
--> Action = 1 | 2 | 3 | 4
-	-> 1 = Join a channel (Message = <<Channel:64/little-unsigned>>)
-	-> 2 = Send a message (Message = <<Channel:64/little-unsigned,0,"foobar">>)
-	-> 3 = Register a user name for the current connection (Message = <<"foo_user">>)
-	-> 4 = Delete (disassociate) the current user name. (Message = <<>>)
+chatsrv uses TCP port 32768 on 0.0.0.0.
+
+Clients shall write atomic data to their TCP sockets so that a client message
+reaches the client handler as one TCP Erlang message {tcp,Socket,Data}.
+Atomic data means that there are more contiguous calls to write(2) or
+one write(2) call transmitting the whole message:
+
+Either
+
+	write(socket,&action_byte,1);
+	write(socket,&channel_number,8);
+	write(socket,"foobarmessage",13);
+
+which should work most of the time or (better)
+
+	write(socket,pointer_to_memory_containing_message,42);
+
+---
+
+Clients shall use the following binary packet form.
+It's built up of one action (or Type Of Message) byte at the beginning of the transmission.
+The Type Of Message byte represents a number between (currently) 1 and 5.
+The meanings of the different values are shown here:
+
+Erlang Jargon Message Format: <<Action:8/unsigned,Message>>
+
+-> Action = 1 | 2 | 3 | 4 | 5
+	-> 1 = Join a channel (Message = <<Channel:64/native-unsigned>>)
+	-> 2 = Send a message (Message = <<Channel:64/native-unsigned,"foobarmessage">>)
+	-> 3 = Register a user name for the current connection (Message = <<"foo_user">>).
+			This operation shall be used before sending any message!!!
+	-> 4 = Delete (disassociate) the current user name (from the DB) and leave all channels. (Message = <<>>)
+	-> 5 = Leave specific channel (IRC: /part). (Message = <<Channel:64/native-unsigned>>)

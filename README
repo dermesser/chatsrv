@@ -9,16 +9,46 @@ The concurrency model looks like this:
 Way of a message
 ****************
 
+EProcess: Erlang process
+EMessage: Erlang message passing message
+
 [Client (e.g. written in C)]
 	--Network-->
 		[EProcess associated with the client]
 			---EMessage--->
-				[Channel Eprocess]
+				[Channel EProcess]
 			---EMessage--->
 		[EProcess associated with other client]
 	--Network-->
 [Client]
 
 
-Mnesia is used to store the channels (channels are a number from 0 - 2^64) and which users are in them,
-and the users itselves.
+Run the Server
+****************
+
+To get the server up and running, first compile the source code files:
+
+$ erlc *.erl
+
+Then start the server and say it to create a new schema (it's equal if there is one
+or not):
+
+$ erl -s chatsrv main true
+
+Now chatsrv should be listening on 32768/tcp4.
+
+Test the server
+****************
+
+Either write your own client in any language supporting sockets and
+basic byte manipulation or use the client examples provided in here.
+
+For the examples to work, you have to install libsocket first. (https://github.com/dermesser/libsocket)
+It's also a good idea to change the hardcoded IP address in the clients.
+
+* client.c takes input on STDIN and sends it as messages to the channel 45
+* client2.c takes messages on the network socket and puts them on STDOUT
+* client3.c is similar to client2.c, but receives only one message and exits.
+
+If a client gets killed (Ctrl+C etc), the associated user is removed in chatsrv, so you
+may start and stop the same client several times (user name is hardcoded).
