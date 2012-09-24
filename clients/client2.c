@@ -39,12 +39,12 @@ int main(int argc, char** argv)
 	write(fd,&action2,9);
 
 	int bytes = 0;
-	char buf[32];
-	buf[31] = 0;
+	char buf[128];
+	buf[127] = 0;
 
 	unsigned long long cur_chan = 0;
 
-	while ( bytes = read(fd,buf,31) )
+	while ( bytes = read(fd,buf,127) )
 	{
 		printf("New message: ");
 		cur_chan = *((uint64_t*)buf);

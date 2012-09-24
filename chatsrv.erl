@@ -117,7 +117,7 @@ join_channel(Channel,User) ->
 	case mnesia:transaction(fun() ->
 				case mnesia:read({channels,Channel}) of
 					%% Channel exists
-					[#channels{pid=Pid}] -> Pid ! {add_member,UserRecord#users.uid}, ok;
+					[#channels{pid=Pid}] -> Pid ! {add_member,UserRecord#users.uid,User}, ok;
 					%% Create new channel
 					[] ->
 						NewCPid = spawn(?MODULE,chanproc,[Channel,[UserRecord#users.uid]]),
@@ -174,7 +174,7 @@ remove_user(UserName) ->
 		end),
 
 	lists:foreach(fun(CPid) ->
-				CPid ! {remove_member,UID}
+				CPid ! {remove_member,UID,UserName}
 		end,CPids).
 
 remove_user_from(UserName,Channel) ->
@@ -187,7 +187,7 @@ remove_user_from(UserName,Channel) ->
 				qlc:e(qlc:q([C#channels.pid || C <- mnesia:table(channels), C#channels.cnumber =:= Channel]))
 		end),
 
-	CPid ! {remove_member,UID}.
+	CPid ! {remove_member,UID,UserName}.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -206,19 +206,24 @@ chanproc(Number,Members) ->
 						Pid ! {mesg,[<<Number:64/unsigned-native>>,Message]}
 				end,MemberPIDs),
 			chanproc(Number,Members);
-		{add_member,UID}    ->
+		{add_member,UID,NewUserName}    ->
 			{atomic,MemberPIDs} = mnesia:transaction(fun() ->
 						qlc:e(qlc:q([U#users.pid || U <- mnesia:table(users), lists:member(U#users.uid,Members)]))
 				end),
-			{atomic,[#users{uname=NewUserName}]} = mnesia:transaction(fun() ->
-						mnesia:read({users,UID})
+			lists:foreach(fun(Pid) ->
+						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
+						Pid ! {mesg,[<<Number:64/unsigned-native>>,NewUserName," has joined the channel\n"]}
+				end,MemberPIDs),
+			chanproc(Number,[UID|Members]);
+		{remove_member,UID,UserName} ->
+			{atomic,MemberPIDs} = mnesia:transaction(fun() ->
+						qlc:e(qlc:q([U#users.pid || U <- mnesia:table(users), lists:member(U#users.uid,Members)]))
 				end),
 			lists:foreach(fun(Pid) ->
 						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
-						Pid ! {mesg,[<<Number:64/unsigned-native>>,NewUserName," has joined the channel"]}
+						Pid ! {mesg,[<<Number:64/unsigned-native>>,UserName," has left the channel\n"]}
 				end,MemberPIDs),
-			chanproc(Number,[UID|Members]);
-		{remove_member,UID} -> chanproc(Number,lists:subtract(Members,[UID]))
+			chanproc(Number,lists:subtract(Members,[UID]))
 	end.
 
 parse_message(Message) ->
