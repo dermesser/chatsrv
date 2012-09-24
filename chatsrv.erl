@@ -50,9 +50,10 @@ handle_client(Socket,UserName) ->
 				deleted -> gen_tcp:close(Socket);
 				parted -> handle_client(Socket,UserName)
 			catch
-				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n"); %% Abort communication; thrown by add_user()
-				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n"),
-					handle_client(Socket,UserName); %% Thrown by join_channel()
+				throw: userExistsAlready -> gen_tcp:send(Socket,"EXCEPTION: User exists already.\n");
+					%handle_client(Socket,""); %% Thrown by add_user() %% Just abort communication
+				throw: noSuchUser -> gen_tcp:send(Socket,"EXCEPTION: No such user. Maybe you should authenticate yourself before sending messages\n");
+					%handle_client(Socket,UserName); %% Thrown by join_channel() %% Just abort communication
 				throw: dbError -> gen_tcp:send(Socket,"EXCEPTION: dbError exception. Continue...\n"),
 					handle_client(Socket,UserName)
 			end;
@@ -205,7 +206,18 @@ chanproc(Number,Members) ->
 						Pid ! {mesg,[<<Number:64/unsigned-native>>,Message]}
 				end,MemberPIDs),
 			chanproc(Number,Members);
-		{add_member,UID}    -> chanproc(Number,[UID|Members]);
+		{add_member,UID}    ->
+			{atomic,MemberPIDs} = mnesia:transaction(fun() ->
+						qlc:e(qlc:q([U#users.pid || U <- mnesia:table(users), lists:member(U#users.uid,Members)]))
+				end),
+			{atomic,[#users{uname=NewUserName}]} = mnesia:transaction(fun() ->
+						mnesia:read({users,UID})
+				end),
+			lists:foreach(fun(Pid) ->
+						%% Second element of tuple goes directly to gen_tcp:send() which accepts (deep) iolists
+						Pid ! {mesg,[<<Number:64/unsigned-native>>,NewUserName," has joined the channel"]}
+				end,MemberPIDs),
+			chanproc(Number,[UID|Members]);
 		{remove_member,UID} -> chanproc(Number,lists:subtract(Members,[UID]))
 	end.
 
