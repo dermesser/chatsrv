@@ -42,13 +42,13 @@ int main(int argc, char** argv)
 	char buf[128];
 	buf[127] = 0;
 
-	unsigned long long cur_chan = 0;
+	uint64_t cur_chan = 0;
 
 	while ( bytes = read(fd,buf,127) )
 	{
-		printf("New message: ");
-		cur_chan = *((uint64_t*)buf);
+		memcpy(&cur_chan,buf,8);
 		printf("%llu: ",cur_chan);
+		fflush(stdout);
 		write(1,buf+8,bytes-8);
 	}
 
