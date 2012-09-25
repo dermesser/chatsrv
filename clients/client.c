@@ -9,7 +9,7 @@
 int main(int argc, char** argv)
 {
 	int fd = -1;
-	const char* host = "192.168.1.8";
+	const char* host = "127.0.0.1";
 
 	fd = create_inet_stream_socket(host,"32768",IPv4,0);
 
